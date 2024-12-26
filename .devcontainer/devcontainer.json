@@ -18,6 +18,6 @@
     }
   },
   "mounts": [
-    "source=${localWorkspaceFolder}/tmp/converter,target=/tmp/converter,type=bind"
+    "source=${localWorkspaceFolder}/tmp/converter,target=/tmp/converter,type=bind,consistency=cached"
   ]
 }

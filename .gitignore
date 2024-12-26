@@ -26,5 +26,5 @@ go.work.sum
 .aider*
 
 # app files
+tmp/converter
 converter.db
-tmp/
