@@ -97,7 +97,6 @@ func loggingMiddleware(logger *slog.Logger, next http.Handler) http.Handler {
                 "path", r.URL.Path,
                 "status", rw.status,
                 "duration_ms", duration.Milliseconds(),
-                "user_agent", r.UserAgent(),
                 "remote_addr", r.RemoteAddr,
                 "content_length", r.ContentLength,
             )
@@ -121,6 +120,11 @@ type ClientConnection struct {
 type WebSocketMessage struct {
 	Type    string               `json:"type"`
 	Payload *services.ConvertJob `json:"payload"`
+}
+
+type WebSocketDeleteMessage struct {
+    Type    string `json:"type"`
+    JobID   string `json:"job_id"`
 }
 
 type Server struct {
@@ -430,6 +434,84 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (s *Server) handleDeleteConvert(w http.ResponseWriter, r *http.Request) {
+    id := r.PathValue("id")
+    
+    // Check if job exists
+    job, err := s.db.GetJob(id)
+    if err != nil {
+        s.logger.Error("failed to get job for deletion", 
+            "error", err, 
+            "id", id,
+        )
+        http.Error(w, "Job not found", http.StatusNotFound)
+        return
+    }
+
+    // Only allow deletion of completed or failed jobs
+    if job.Status != StatusComplete && job.Status != StatusFailed {
+        s.logger.Warn("attempted to delete job with invalid status",
+            "job_id", id,
+            "status", job.Status,
+        )
+        http.Error(w, "Cannot delete job in progress", http.StatusForbidden)
+        return
+    }
+
+    // Delete job files
+    jobDir := filepath.Join(s.converter.tempDir, job.ID)
+    if err := os.RemoveAll(jobDir); err != nil {
+        s.logger.Error("failed to remove job directory",
+            "error", err,
+            "path", jobDir,
+        )
+        // Continue with DB deletion even if files deletion fails
+    }
+
+    // Delete from database
+    if err := s.db.DeleteJob(id); err != nil {
+        s.logger.Error("failed to delete job", 
+            "error", err, 
+            "id", id,
+        )
+        http.Error(w, "Internal server error", http.StatusInternalServerError)
+        return
+    }
+
+    // Broadcast deletion via websocket
+    s.broadcastJobDelete(id)
+
+    // Return 204 No Content
+    w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) broadcastJobDelete(jobID string) {
+    message := WebSocketDeleteMessage{
+        Type:  "job_delete",
+        JobID: jobID,
+    }
+
+    messageBytes, err := json.Marshal(message)
+    if err != nil {
+        s.logger.Error("failed to marshal websocket delete message", "error", err)
+        return
+    }
+
+    s.clientsMu.RLock()
+    defer s.clientsMu.RUnlock()
+
+    for client := range s.clients {
+        client.mu.Lock()
+        err := client.conn.WriteMessage(websocket.TextMessage, messageBytes)
+        client.mu.Unlock()
+        
+        if err != nil {
+            s.logger.Error("failed to send websocket delete message", "error", err)
+            continue
+        }
+    }
+}
+
 func (s *Server) broadcastJobUpdate(job *services.ConvertJob) {
 	message := WebSocketMessage{
 		Type:    "job_update",
@@ -643,6 +725,7 @@ func main() {
 	mux.HandleFunc("POST /converts", server.handleCreateConvert)
 	mux.HandleFunc("GET /converts/{id}", server.handleGetConvert)
 	mux.HandleFunc("GET /convert-outcomes/{id}", server.handleDownloadConvert)
+	mux.HandleFunc("DELETE /converts/{id}", server.handleDeleteConvert)
 	mux.HandleFunc("GET /ws", server.handleWebSocket)
 
 	// Wrap all handlers with logging middleware

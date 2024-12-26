@@ -25,6 +25,17 @@
             background-color: #f0f0f0;
             border-color: #33C3F0;
         }
+
+        .button-delete {
+            background-color: #e74c3c;
+            border-color: #c0392b;
+            color: white;
+        }
+        
+        .button-delete:hover {
+            background-color: #c0392b;
+            border-color: #a93226;
+        }
         
         .drop-zone p {
             margin: 0;
@@ -104,6 +115,28 @@
         const submitBtn = document.getElementById('submitBtn');
         const fileName = document.querySelector('.file-name');
 
+        function deleteJob(jobId) {
+            if (!confirm('Are you sure you want to delete this job?')) {
+                return;
+            }
+
+            fetch(`/converts/${jobId}`, {
+                method: 'DELETE',
+            })
+            .then(response => {
+                if (response.status === 403) {
+                    throw new Error('Cannot delete job in progress');
+                }
+                if (!response.ok) {
+                    throw new Error('Failed to delete job');
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert(error.message); // Show error to user
+            });
+        }
+
         // Drag and drop handlers
         ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
             dropZone.addEventListener(eventName, preventDefaults, false);
@@ -161,6 +194,12 @@
                 const message = JSON.parse(event.data);
                 if (message.type === 'job_update') {
                     updateJobInList(message.payload);
+                } else if (message.type === 'job_delete') {
+                    // Remove deleted job from UI
+                    const jobElement = document.getElementById(`job-${message.job_id}`);
+                    if (jobElement) {
+                        jobElement.remove();
+                    }
                 }
             };
             
@@ -213,12 +252,17 @@
             const downloadButton = job.status === 'complete' 
                 ? `<a href="/convert-outcomes/${job.id}" class="button button-primary">Download</a>`
                 : '';
+            
+            // Only show delete button for complete or failed jobs
+            const deleteButton = (job.status === 'complete' || job.status === 'failed')
+                ? `<button onclick="deleteJob('${job.id}')" class="button button-delete">Delete</button>`
+                : '';
         
             return `
                 <td>${job.original_file}</td>
                 <td>${job.status}${job.error ? `: ${job.error}` : ''}</td>
                 <td>${relativeTime}</td>
-                <td>${downloadButton}</td>
+                <td>${downloadButton} ${deleteButton}</td>
             `;
         }
 
@@ -257,12 +301,24 @@
         fetch('/converts')
             .then(response => response.json())
             .then(jobs => {
+                if (!Array.isArray(jobs)) {
+                    console.error('Expected array of jobs, got:', jobs);
+                    jobs = []; // Use empty array if response is not an array
+                }
                 const jobsHtml = jobs.map(job => `
                     <tr id="job-${job.id}" data-created-at="${job.created_at}">
                         ${createJobRow(job)}
                     </tr>
                 `).join('');
                 document.getElementById('jobs').innerHTML = jobsHtml;
+            })
+            .catch(error => {
+                console.error('Failed to load jobs:', error);
+                document.getElementById('jobs').innerHTML = `
+                    <tr>
+                        <td colspan="4">Failed to load jobs. Please refresh the page.</td>
+                    </tr>
+                `;
             });
 
         // Add periodic updates for relative times
