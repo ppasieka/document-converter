@@ -1,0 +1,162 @@
+openapi: 3.1.0
+info:
+  title: Document Converter API
+  description: API for converting document files (DOCX, XLSX, ODT) to HTML using LibreOffice
+  version: 1.0.0
+
+servers:
+  - url: http://localhost:8080
+    description: Local development server
+
+paths:
+  /:
+    get:
+      summary: Serve conversion panel
+      description: Serves the HTML form for document conversion (same as /panel)
+      responses:
+        "200":
+          description: HTML page with conversion form
+          content:
+            text/html:
+              schema:
+                type: string
+
+  /panel:
+    get:
+      summary: Serve conversion panel
+      description: Serves the HTML form for document conversion
+      responses:
+        "200":
+          description: HTML page with conversion form
+          content:
+            text/html:
+              schema:
+                type: string
+
+  /converts:
+    get:
+      summary: List all conversion jobs
+      description: Returns a list of all conversion jobs
+      responses:
+        "200":
+          description: List of conversion jobs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ConvertJob"
+    post:
+      summary: Create new conversion job
+      description: Upload a document file to create a new conversion job
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        "202":
+          description: Conversion job created
+          headers:
+            Location:
+              schema:
+                type: string
+              description: URL to check conversion status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                    format: uuid
+
+  /converts/{id}:
+    get:
+      summary: Get conversion job details
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Conversion job details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobResponse"
+        "404":
+          description: Job not found
+
+  /convert-outcomes/{id}:
+    get:
+      summary: Download converted HTML file
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Converted HTML file
+          content:
+            text/html:
+              schema:
+                type: string
+        "404":
+          description: Conversion not complete or file not found
+
+components:
+  schemas:
+    ConvertJob:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        original_file:
+          type: string
+        converted_file:
+          type: string
+        status:
+          type: string
+          enum: [pending, complete, failed]
+        error:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    Link:
+      type: object
+      properties:
+        href:
+          type: string
+        rel:
+          type: string
+        method:
+          type: string
+
+    JobResponse:
+      type: object
+      allOf:
+        - $ref: "#/components/schemas/ConvertJob"
+        - type: object
+          properties:
+            links:
+              type: array
+              items:
+                $ref: "#/components/schemas/Link"

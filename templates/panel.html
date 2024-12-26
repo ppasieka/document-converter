@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document Converter</title>
+    
+    <!-- Skeleton CSS -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/skeleton/2.0.4/skeleton.min.css">
+    <!-- Google Fonts -->
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Raleway:400,300,600">
+    
+    <style>
+        .drop-zone {
+            min-height: 200px;
+            border: 2px dashed #bbb;
+            border-radius: 5px;
+            padding: 25px;
+            text-align: center;
+            margin: 25px 0;
+            transition: all 0.3s ease;
+        }
+        
+        .drop-zone.dragover {
+            background-color: #f0f0f0;
+            border-color: #33C3F0;
+        }
+        
+        .drop-zone p {
+            margin: 0;
+            font-size: 1.2em;
+            color: #666;
+        }
+        
+        .hidden {
+            display: none;
+        }
+        
+        .section {
+            padding: 4rem 0;
+        }
+        
+        #jobs tr.new {
+            animation: highlight 2s ease-out;
+        }
+        
+        @keyframes highlight {
+            0% { background-color: #33C3F0; }
+            100% { background-color: transparent; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <section class="section">
+            <h2 class="title">Document Converter</h2>
+            
+            <!-- Upload Section -->
+            <div class="row">
+                <div class="twelve columns">
+                    <form id="convertForm" action="/converts" method="post" enctype="multipart/form-data">
+                        <div class="drop-zone" id="dropZone">
+                            <p>Drag and drop files here</p>
+                            <p>or</p>
+                            <input type="file" name="file" id="fileInput" class="hidden" accept=".docx,.xlsx,.odt">
+                            <button type="button" class="button-primary" onclick="document.getElementById('fileInput').click()">
+                                Select File
+                            </button>
+                            <p class="file-name"></p>
+                        </div>
+                        <button type="submit" class="button-primary u-full-width" disabled id="submitBtn">
+                            Convert Document
+                        </button>
+                    </form>
+                </div>
+            </div>
+
+            <!-- Results Section -->
+            <div class="row">
+                <div class="twelve columns">
+                    <h4>Recent Conversions</h4>
+                    <table class="u-full-width">
+                        <thead>
+                            <tr>
+                                <th>File Name</th>
+                                <th>Status</th>
+                                <th>Created</th>
+                                <th>Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="jobs">
+                            <!-- Jobs will be inserted here dynamically -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <script>
+        let ws;
+        const dropZone = document.getElementById('dropZone');
+        const fileInput = document.getElementById('fileInput');
+        const submitBtn = document.getElementById('submitBtn');
+        const fileName = document.querySelector('.file-name');
+
+        // Drag and drop handlers
+        ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+            dropZone.addEventListener(eventName, preventDefaults, false);
+        });
+
+        function preventDefaults(e) {
+            e.preventDefault();
+            e.stopPropagation();
+        }
+
+        ['dragenter', 'dragover'].forEach(eventName => {
+            dropZone.addEventListener(eventName, highlight, false);
+        });
+
+        ['dragleave', 'drop'].forEach(eventName => {
+            dropZone.addEventListener(eventName, unhighlight, false);
+        });
+
+        function highlight(e) {
+            dropZone.classList.add('dragover');
+        }
+
+        function unhighlight(e) {
+            dropZone.classList.remove('dragover');
+        }
+
+        dropZone.addEventListener('drop', handleDrop, false);
+
+        function handleDrop(e) {
+            const dt = e.dataTransfer;
+            const files = dt.files;
+            fileInput.files = files;
+            handleFiles(files);
+        }
+
+        fileInput.addEventListener('change', function(e) {
+            handleFiles(this.files);
+        });
+
+        function handleFiles(files) {
+            if (files.length > 0) {
+                fileName.textContent = files[0].name;
+                submitBtn.disabled = false;
+            }
+        }
+
+        // WebSocket connection
+        function connectWebSocket() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}/ws`;
+            
+            ws = new WebSocket(wsUrl);
+            
+            ws.onmessage = function(event) {
+                const message = JSON.parse(event.data);
+                if (message.type === 'job_update') {
+                    updateJobInList(message.payload);
+                }
+            };
+            
+            ws.onclose = function() {
+                setTimeout(connectWebSocket, 5000);
+            };
+        }
+
+        function updateJobInList(job) {
+            const jobElement = document.getElementById(`job-${job.id}`);
+            const jobHtml = createJobRow(job);
+            
+            if (jobElement) {
+                jobElement.innerHTML = jobHtml;
+            } else {
+                const tr = document.createElement('tr');
+                tr.id = `job-${job.id}`;
+                tr.innerHTML = jobHtml;
+                tr.classList.add('new');
+                const tbody = document.getElementById('jobs');
+                tbody.insertBefore(tr, tbody.firstChild);
+            }
+        }
+
+        function formatRelativeTime(dateStr) {
+            const date = new Date(dateStr);
+            const now = new Date();
+            const diffInSeconds = Math.floor((now - date) / 1000);
+        
+            if (diffInSeconds < 60) {
+                return 'just now';
+            }
+        
+            const diffInMinutes = Math.floor(diffInSeconds / 60);
+            if (diffInMinutes < 60) {
+                return `${diffInMinutes} minute${diffInMinutes !== 1 ? 's' : ''} ago`;
+            }
+        
+            const diffInHours = Math.floor(diffInMinutes / 60);
+            if (diffInHours < 24) {
+                return `${diffInHours} hour${diffInHours !== 1 ? 's' : ''} ago`;
+            }
+        
+            const diffInDays = Math.floor(diffInHours / 24);
+            return `${diffInDays} day${diffInDays !== 1 ? 's' : ''} ago`;
+        }
+
+        function createJobRow(job) {
+            const relativeTime = formatRelativeTime(job.created_at);
+            const downloadButton = job.status === 'complete' 
+                ? `<a href="/convert-outcomes/${job.id}" class="button button-primary">Download</a>`
+                : '';
+        
+            return `
+                <td>${job.original_file}</td>
+                <td>${job.status}${job.error ? `: ${job.error}` : ''}</td>
+                <td>${relativeTime}</td>
+                <td>${downloadButton}</td>
+            `;
+        }
+
+        function updateRelativeTimes() {
+            const rows = document.querySelectorAll('#jobs tr');
+            rows.forEach(row => {
+                const job = {
+                    id: row.id.replace('job-', ''),
+                    original_file: row.cells[0].textContent,
+                    status: row.cells[1].textContent,
+                    created_at: row.dataset.createdAt,
+                };
+                row.cells[2].textContent = formatRelativeTime(job.created_at);
+            });
+        }
+
+        // Form submission
+        document.getElementById('convertForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            const formData = new FormData(this);
+            
+            fetch('/converts', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                fileInput.value = '';
+                fileName.textContent = '';
+                submitBtn.disabled = true;
+            })
+            .catch(error => console.error('Error:', error));
+        });
+
+        // Initial load of jobs
+        fetch('/converts')
+            .then(response => response.json())
+            .then(jobs => {
+                const jobsHtml = jobs.map(job => `
+                    <tr id="job-${job.id}" data-created-at="${job.created_at}">
+                        ${createJobRow(job)}
+                    </tr>
+                `).join('');
+                document.getElementById('jobs').innerHTML = jobsHtml;
+            });
+
+        // Add periodic updates for relative times
+        setInterval(updateRelativeTimes, 60000); // Update every minute
+
+        // Connect WebSocket when page loads
+        connectWebSocket();
+    </script>
+</body>
+</html>
