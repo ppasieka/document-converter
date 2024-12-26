@@ -1,5 +1,5 @@
 FROM golang:1.23 
-RUN apt-get update && apt-get install -y libreoffice-core --no-install-recommends
+RUN apt-get update && apt-get install -y libreoffice
 
 ENV APP_LOG_LEVEL=info \
     APP_LOG_JSON=false \
