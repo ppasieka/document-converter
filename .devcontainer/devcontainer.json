@@ -15,5 +15,8 @@
         "golang.go"
       ]
     }
-  }
+  },
+  "mounts": [
+    "source=${localWorkspaceFolder}/tmp/converter,target=/tmp/converter,type=bind"
+  ]
 }

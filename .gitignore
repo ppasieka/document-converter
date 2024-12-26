@@ -27,3 +27,4 @@ go.work.sum
 
 # app files
 converter.db
+tmp/
