@@ -26,5 +26,6 @@ go.work.sum
 .aider*
 
 # app files
-tmp/converter
+tmp/converter/*
+!tmp/converter/.gitkeep
 converter.db
