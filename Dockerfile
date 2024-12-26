@@ -21,9 +21,10 @@ RUN CC=musl-gcc CGO_ENABLED=1 GOOS=linux go build -ldflags '-linkmode external -
 # Final stage
 FROM alpine:3.21
 
-# Install LibreOffice and required fonts
+# Install LibreOffice, Java, and required fonts
 RUN apk add --no-cache \
     libreoffice \
+    openjdk11-jre \
     font-misc-misc \
     font-terminus \
     font-inconsolata \
@@ -81,5 +82,4 @@ ENV APP_LOG_LEVEL=info \
     RETENTION_PERIOD=24h
 
 # Set the entrypoint and default command
-# ENTRYPOINT ["/app/entrypoint.sh"]
 CMD ["./document-converter"]

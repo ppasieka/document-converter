@@ -2,4 +2,3 @@
 /add services/db.go
 /add Dockerfile
 /add templates/panel.html
-/add entrypoint.sh

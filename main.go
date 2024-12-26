@@ -58,50 +58,50 @@ func NewConverter(tempDir string, logger *slog.Logger) *Converter {
 }
 
 type responseWriter struct {
-    http.ResponseWriter
-    http.Hijacker
-    status int
+	http.ResponseWriter
+	http.Hijacker
+	status int
 }
 
 func (rw *responseWriter) WriteHeader(code int) {
-    rw.status = code
-    rw.ResponseWriter.WriteHeader(code)
+	rw.status = code
+	rw.ResponseWriter.WriteHeader(code)
 }
 
 func loggingMiddleware(logger *slog.Logger, next http.Handler) http.Handler {
-    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-        start := time.Now()
-        
-        // Create a response wrapper that includes Hijacker if available
-        rw := &responseWriter{
-            ResponseWriter: w,
-            status:        http.StatusOK,
-        }
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
 
-        // Try to get the Hijacker from the original ResponseWriter
-        if hijacker, ok := w.(http.Hijacker); ok {
-            rw.Hijacker = hijacker
-        }
+		// Create a response wrapper that includes Hijacker if available
+		rw := &responseWriter{
+			ResponseWriter: w,
+			status:         http.StatusOK,
+		}
 
-        // Process request
-        next.ServeHTTP(rw, r)
+		// Try to get the Hijacker from the original ResponseWriter
+		if hijacker, ok := w.(http.Hijacker); ok {
+			rw.Hijacker = hijacker
+		}
 
-        // Don't log WebSocket upgrade requests that were successful
-        if rw.status != http.StatusSwitchingProtocols {
-            // Calculate duration
-            duration := time.Since(start)
+		// Process request
+		next.ServeHTTP(rw, r)
 
-            // Log the request details
-            logger.Info("http request",
-                "method", r.Method,
-                "path", r.URL.Path,
-                "status", rw.status,
-                "duration_ms", duration.Milliseconds(),
-                "remote_addr", r.RemoteAddr,
-                "content_length", r.ContentLength,
-            )
-        }
-    })
+		// Don't log WebSocket upgrade requests that were successful
+		if rw.status != http.StatusSwitchingProtocols {
+			// Calculate duration
+			duration := time.Since(start)
+
+			// Log the request details
+			logger.Info("http request",
+				"method", r.Method,
+				"path", r.URL.Path,
+				"status", rw.status,
+				"duration_ms", duration.Milliseconds(),
+				"remote_addr", r.RemoteAddr,
+				"content_length", r.ContentLength,
+			)
+		}
+	})
 }
 
 var upgrader = websocket.Upgrader{
@@ -123,8 +123,8 @@ type WebSocketMessage struct {
 }
 
 type WebSocketDeleteMessage struct {
-    Type    string `json:"type"`
-    JobID   string `json:"job_id"`
+	Type  string `json:"type"`
+	JobID string `json:"job_id"`
 }
 
 type Server struct {
@@ -158,7 +158,7 @@ func (s *Server) handleListConverts(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDownloadConvert(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	
+
 	job, err := s.db.GetJob(id)
 	if err != nil {
 		s.logger.Error("failed to get job", "error", err, "id", id)
@@ -179,8 +179,8 @@ func (s *Server) handleDownloadConvert(w http.ResponseWriter, r *http.Request) {
 	// Open and serve the file
 	file, err := os.Open(job.ConvertedFile)
 	if err != nil {
-		s.logger.Error("failed to open converted file", 
-			"error", err, 
+		s.logger.Error("failed to open converted file",
+			"error", err,
 			"path", job.ConvertedFile,
 		)
 		http.Error(w, "File not found", http.StatusNotFound)
@@ -190,13 +190,13 @@ func (s *Server) handleDownloadConvert(w http.ResponseWriter, r *http.Request) {
 
 	// Set appropriate headers
 	w.Header().Set("Content-Type", "text/html")
-	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%s", 
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%s",
 		filepath.Base(job.ConvertedFile)))
 
 	// Stream the file
 	if _, err := io.Copy(w, file); err != nil {
-		s.logger.Error("failed to stream file", 
-			"error", err, 
+		s.logger.Error("failed to stream file",
+			"error", err,
 			"job_id", id,
 		)
 	}
@@ -237,154 +237,245 @@ func (s *Server) handleGetConvert(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCreateConvert(w http.ResponseWriter, r *http.Request) {
-    s.logger.Info("starting new conversion request")
+	s.logger.Info("starting new conversion request")
 
-    file, header, err := r.FormFile("file")
-    if err != nil {
-        s.logger.Error("no file provided in request", 
-            "error", err,
-            "headers", header,
-        )
-        http.Error(w, "No file provided", http.StatusBadRequest)
-        return
-    }
-    defer file.Close()
+	// Define allowed file extensions
+	allowedExtensions := map[string]bool{
+		".docx": true,
+		".xlsx": true,
+		".odt":  true,
+	}
 
-    s.logger.Info("received file for conversion",
-        "filename", header.Filename,
-        "size", header.Size,
-        "content_type", header.Header.Get("Content-Type"),
-    )
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		s.logger.Error("no file provided in request",
+			"error", err,
+			"headers", header,
+		)
+		http.Error(w, "No file provided", http.StatusBadRequest)
+		return
+	}
+	defer file.Close()
 
-    jobID := uuid.New().String()
+	// Validate file extension
+	ext := strings.ToLower(filepath.Ext(header.Filename))
+	if !allowedExtensions[ext] {
+		s.logger.Error("invalid file extension",
+			"filename", header.Filename,
+			"extension", ext,
+		)
+		http.Error(w, "Invalid file type. Allowed types: .docx, .xlsx, .odt", http.StatusBadRequest)
+		return
+	}
 
-    job := &services.ConvertJob{
-        ID:           jobID,
-        OriginalFile: header.Filename,
-        Status:       StatusPending,
-        CreatedAt:    time.Now(),
-        UpdatedAt:    time.Now(),
-    }
+	// Validate Content-Type
+	allowedMimeTypes := map[string]bool{
+		"application/vnd.openxmlformats-officedocument.wordprocessingml.document": true,
+		"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":       true,
+		"application/vnd.oasis.opendocument.text":                                 true,
+	}
 
-    if err := s.db.CreateJob(job); err != nil {
-        s.logger.Error("failed to create job in database", 
-            "error", err,
-            "job_id", jobID,
-        )
-        http.Error(w, "Internal server error", http.StatusInternalServerError)
-        return
-    }
+	contentType := header.Header.Get("Content-Type")
+	if !allowedMimeTypes[contentType] {
+		s.logger.Error("invalid content type",
+			"filename", header.Filename,
+			"content_type", contentType,
+		)
+		http.Error(w, "Invalid file type", http.StatusBadRequest)
+		return
+	}
 
-    // Broadcast the initial job creation
-    s.broadcastJobUpdate(job)
+	s.logger.Info("received file for conversion",
+		"filename", header.Filename,
+		"size", header.Size,
+		"content_type", header.Header.Get("Content-Type"),
+	)
 
-    s.logger.Info("conversion job created", 
-        "job_id", jobID,
-        "filename", header.Filename,
-    )
+	jobID := uuid.New().String()
 
-    // Start processing in a goroutine to not block the response
-    go s.processConversion(jobID, file, header.Filename)
+	job := &services.ConvertJob{
+		ID:           jobID,
+		OriginalFile: header.Filename,
+		Status:       StatusPending,
+		CreatedAt:    time.Now(),
+		UpdatedAt:    time.Now(),
+	}
 
-    w.Header().Set("Location", fmt.Sprintf("/converts/%s", jobID))
-    w.WriteHeader(http.StatusAccepted)
-    json.NewEncoder(w).Encode(map[string]string{"id": jobID})
+	if err := s.db.CreateJob(job); err != nil {
+		s.logger.Error("failed to create job in database",
+			"error", err,
+			"job_id", jobID,
+		)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	// Broadcast the initial job creation
+	s.broadcastJobUpdate(job)
+
+	s.logger.Info("conversion job created",
+		"job_id", jobID,
+		"filename", header.Filename,
+	)
+
+	// Start processing in a goroutine to not block the response
+	go s.processConversion(jobID, file, header.Filename)
+
+	w.Header().Set("Location", fmt.Sprintf("/converts/%s", jobID))
+	w.WriteHeader(http.StatusAccepted)
+	json.NewEncoder(w).Encode(map[string]string{"id": jobID})
 }
 
 func (s *Server) processConversion(jobID string, file io.Reader, filename string) {
-    s.logger.Info("starting conversion process",
-        "job_id", jobID,
-        "filename", filename,
-    )
+	s.logger.Info("starting conversion process",
+		"job_id", jobID,
+		"filename", filename,
+	)
 
-    // Get initial job state to broadcast
-    initialJob, _ := s.db.GetJob(jobID)
-    if initialJob != nil {
-        s.broadcastJobUpdate(initialJob)
-    }
+	// Get initial job state to broadcast
+	initialJob, _ := s.db.GetJob(jobID)
+	if initialJob != nil {
+		s.broadcastJobUpdate(initialJob)
+	}
 
-    // Create job directory structure
-    jobDir := filepath.Join(s.converter.tempDir, jobID)
-    originalDir := filepath.Join(jobDir, "original")
-    convertedDir := filepath.Join(jobDir, "converted")
+	// Create job directory structure
+	jobDir := filepath.Join(s.converter.tempDir, jobID)
+	originalDir := filepath.Join(jobDir, "original")
+	convertedDir := filepath.Join(jobDir, "converted")
 
-    // Create directories
-    for _, dir := range []string{originalDir, convertedDir} {
-        if err := os.MkdirAll(dir, 0755); err != nil {
-            s.logger.Error("failed to create directory",
-                "path", dir,
-                "error", err,
-                "job_id", jobID,
-            )
-            s.updateJobStatus(jobID, StatusFailed, err.Error())
-            return
-        }
-    }
+	// Create directories
+	for _, dir := range []string{originalDir, convertedDir} {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			s.logger.Error("failed to create directory",
+				"path", dir,
+				"error", err,
+				"job_id", jobID,
+			)
+			s.updateJobStatus(jobID, StatusFailed, err.Error())
+			return
+		}
+	}
 
-    // Save original file
-    originalPath := filepath.Join(originalDir, filename)
-    if err := saveFile(file, originalPath); err != nil {
-        s.logger.Error("failed to save original file",
-            "path", originalPath,
-            "error", err,
-            "job_id", jobID,
-        )
-        s.updateJobStatus(jobID, StatusFailed, err.Error())
-        return
-    }
+	// Save original file
+	originalPath := filepath.Join(originalDir, filename)
+	if err := saveFile(file, originalPath); err != nil {
+		s.logger.Error("failed to save original file",
+			"path", originalPath,
+			"error", err,
+			"job_id", jobID,
+		)
+		s.updateJobStatus(jobID, StatusFailed, err.Error())
+		return
+	}
 
-    // Run conversion
-    cmd := exec.Command(
-        "libreoffice",
-        "--headless",
-        "--convert-to", "html:HTML:EmbedImages",
-        "--outdir", convertedDir,
-        originalPath,
-    )
+	// Run conversion
+	cmd := exec.Command(
+		"libreoffice",
+		"--convert-to", "html:HTML:EmbedImages",
+		"--headless",
+		"--outdir", convertedDir,
+		originalPath,
+	)
 
-    output, err := cmd.CombinedOutput()
-    if err != nil {
-        s.logger.Error("libreoffice conversion failed",
-            "error", err,
-            "output", string(output),
-            "job_id", jobID,
-        )
-        s.updateJobStatus(jobID, StatusFailed, err.Error())
-        return
-    }
+	output, err := cmd.CombinedOutput()
+	outputStr := string(output)
 
-    // Get the original filename without extension
-    baseName := strings.TrimSuffix(filepath.Base(originalPath), filepath.Ext(originalPath))
-    convertedFile := filepath.Join(convertedDir, baseName+".html")
+	// Check for specific error patterns in the output
+	if err != nil || strings.Contains(outputStr, "Error:") || strings.Contains(outputStr, "failed:") {
+		errorMsg := "Conversion failed"
+		if strings.Contains(outputStr, "Error:") {
+			// Extract error message between "Error:" and the next newline
+			if idx := strings.Index(outputStr, "Error:"); idx != -1 {
+				errorPart := outputStr[idx:]
+				if newLineIdx := strings.Index(errorPart, "\n"); newLineIdx != -1 {
+					errorMsg = errorPart[:newLineIdx]
+				} else {
+					errorMsg = errorPart
+				}
+			}
+		}
 
-    // Update job with converted file path
-    job := &services.ConvertJob{
-        ID:            jobID,
-        Status:        StatusComplete,
-        ConvertedFile: convertedFile,
-        UpdatedAt:     time.Now(),
-    }
+		s.logger.Error("libreoffice conversion failed",
+			"error", err,
+			"output", outputStr,
+			"command", cmd.String(),
+			"job_id", jobID,
+		)
+		s.updateJobStatus(jobID, StatusFailed, errorMsg)
+		return
+	}
 
-    if err := s.db.UpdateJob(job); err != nil {
-        s.logger.Error("failed to update job with converted file",
-            "error", err,
-            "job_id", jobID,
-        )
-        return
-    }
+	// Log successful conversion
+	s.logger.Info("libreoffice conversion completed",
+		"output", outputStr,
+		"job_id", jobID,
+	)
 
-    // Get the updated job to broadcast
-    updatedJob, err := s.db.GetJob(jobID)
-    if err != nil {
-        s.logger.Error("failed to get updated job for broadcast",
-            "error", err,
-            "job_id", jobID,
-        )
-        return
-    }
+	// Add permissions check and fix
+	if err := os.Chmod(convertedDir, 0755); err != nil {
+		s.logger.Error("failed to set converted directory permissions",
+			"error", err,
+			"path", convertedDir,
+			"job_id", jobID,
+		)
+		s.updateJobStatus(jobID, StatusFailed, "Failed to set directory permissions")
+		return
+	}
 
-    // Broadcast the final update
-    s.broadcastJobUpdate(updatedJob)
+	// Get the original filename without extension
+	baseName := strings.TrimSuffix(filepath.Base(originalPath), filepath.Ext(originalPath))
+	convertedFile := filepath.Join(convertedDir, baseName+".html")
+
+	// Verify converted file exists and set permissions
+	if _, err := os.Stat(convertedFile); os.IsNotExist(err) {
+		errMsg := "Converted file not found after conversion"
+		s.logger.Error(errMsg,
+			"expected_file", convertedFile,
+			"job_id", jobID,
+		)
+		s.updateJobStatus(jobID, StatusFailed, errMsg)
+		return
+	}
+
+	// Set permissions on the converted file
+	if err := os.Chmod(convertedFile, 0644); err != nil {
+		s.logger.Error("failed to set converted file permissions",
+			"error", err,
+			"path", convertedFile,
+			"job_id", jobID,
+		)
+		s.updateJobStatus(jobID, StatusFailed, "Failed to set file permissions")
+		return
+	}
+
+	// Update job with converted file path
+	job := &services.ConvertJob{
+		ID:            jobID,
+		Status:        StatusComplete,
+		ConvertedFile: convertedFile,
+		UpdatedAt:     time.Now(),
+	}
+
+	if err := s.db.UpdateJob(job); err != nil {
+		s.logger.Error("failed to update job with converted file",
+			"error", err,
+			"job_id", jobID,
+		)
+		return
+	}
+
+	// Get the updated job to broadcast
+	updatedJob, err := s.db.GetJob(jobID)
+	if err != nil {
+		s.logger.Error("failed to get updated job for broadcast",
+			"error", err,
+			"job_id", jobID,
+		)
+		return
+	}
+
+	// Broadcast the final update
+	s.broadcastJobUpdate(updatedJob)
 }
 
 func saveFile(src io.Reader, dst string) error {
@@ -406,7 +497,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 
 	client := &ClientConnection{conn: conn}
-	
+
 	s.clientsMu.Lock()
 	s.clients[client] = true
 	s.clientsMu.Unlock()
@@ -435,81 +526,81 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDeleteConvert(w http.ResponseWriter, r *http.Request) {
-    id := r.PathValue("id")
-    
-    // Check if job exists
-    job, err := s.db.GetJob(id)
-    if err != nil {
-        s.logger.Error("failed to get job for deletion", 
-            "error", err, 
-            "id", id,
-        )
-        http.Error(w, "Job not found", http.StatusNotFound)
-        return
-    }
+	id := r.PathValue("id")
 
-    // Only allow deletion of completed or failed jobs
-    if job.Status != StatusComplete && job.Status != StatusFailed {
-        s.logger.Warn("attempted to delete job with invalid status",
-            "job_id", id,
-            "status", job.Status,
-        )
-        http.Error(w, "Cannot delete job in progress", http.StatusForbidden)
-        return
-    }
+	// Check if job exists
+	job, err := s.db.GetJob(id)
+	if err != nil {
+		s.logger.Error("failed to get job for deletion",
+			"error", err,
+			"id", id,
+		)
+		http.Error(w, "Job not found", http.StatusNotFound)
+		return
+	}
 
-    // Delete job files
-    jobDir := filepath.Join(s.converter.tempDir, job.ID)
-    if err := os.RemoveAll(jobDir); err != nil {
-        s.logger.Error("failed to remove job directory",
-            "error", err,
-            "path", jobDir,
-        )
-        // Continue with DB deletion even if files deletion fails
-    }
+	// Only allow deletion of completed or failed jobs
+	if job.Status != StatusComplete && job.Status != StatusFailed {
+		s.logger.Warn("attempted to delete job with invalid status",
+			"job_id", id,
+			"status", job.Status,
+		)
+		http.Error(w, "Cannot delete job in progress", http.StatusForbidden)
+		return
+	}
 
-    // Delete from database
-    if err := s.db.DeleteJob(id); err != nil {
-        s.logger.Error("failed to delete job", 
-            "error", err, 
-            "id", id,
-        )
-        http.Error(w, "Internal server error", http.StatusInternalServerError)
-        return
-    }
+	// Delete job files
+	jobDir := filepath.Join(s.converter.tempDir, job.ID)
+	if err := os.RemoveAll(jobDir); err != nil {
+		s.logger.Error("failed to remove job directory",
+			"error", err,
+			"path", jobDir,
+		)
+		// Continue with DB deletion even if files deletion fails
+	}
 
-    // Broadcast deletion via websocket
-    s.broadcastJobDelete(id)
+	// Delete from database
+	if err := s.db.DeleteJob(id); err != nil {
+		s.logger.Error("failed to delete job",
+			"error", err,
+			"id", id,
+		)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
 
-    // Return 204 No Content
-    w.WriteHeader(http.StatusNoContent)
+	// Broadcast deletion via websocket
+	s.broadcastJobDelete(id)
+
+	// Return 204 No Content
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) broadcastJobDelete(jobID string) {
-    message := WebSocketDeleteMessage{
-        Type:  "job_delete",
-        JobID: jobID,
-    }
+	message := WebSocketDeleteMessage{
+		Type:  "job_delete",
+		JobID: jobID,
+	}
 
-    messageBytes, err := json.Marshal(message)
-    if err != nil {
-        s.logger.Error("failed to marshal websocket delete message", "error", err)
-        return
-    }
+	messageBytes, err := json.Marshal(message)
+	if err != nil {
+		s.logger.Error("failed to marshal websocket delete message", "error", err)
+		return
+	}
 
-    s.clientsMu.RLock()
-    defer s.clientsMu.RUnlock()
+	s.clientsMu.RLock()
+	defer s.clientsMu.RUnlock()
 
-    for client := range s.clients {
-        client.mu.Lock()
-        err := client.conn.WriteMessage(websocket.TextMessage, messageBytes)
-        client.mu.Unlock()
-        
-        if err != nil {
-            s.logger.Error("failed to send websocket delete message", "error", err)
-            continue
-        }
-    }
+	for client := range s.clients {
+		client.mu.Lock()
+		err := client.conn.WriteMessage(websocket.TextMessage, messageBytes)
+		client.mu.Unlock()
+
+		if err != nil {
+			s.logger.Error("failed to send websocket delete message", "error", err)
+			continue
+		}
+	}
 }
 
 func (s *Server) broadcastJobUpdate(job *services.ConvertJob) {
@@ -531,7 +622,7 @@ func (s *Server) broadcastJobUpdate(job *services.ConvertJob) {
 		client.mu.Lock()
 		err := client.conn.WriteMessage(websocket.TextMessage, messageBytes)
 		client.mu.Unlock()
-		
+
 		if err != nil {
 			s.logger.Error("failed to send websocket message", "error", err)
 			continue
@@ -612,68 +703,68 @@ func setupLogger() *slog.Logger {
 }
 
 func (s *Server) startCleanupJob(ctx context.Context) {
-    cleanupInterval := 1 * time.Hour // Run hourly
-    if interval := os.Getenv("CLEANUP_INTERVAL"); interval != "" {
-        if d, err := time.ParseDuration(interval); err == nil {
-            cleanupInterval = d
-        }
-    }
+	cleanupInterval := 1 * time.Hour // Run hourly
+	if interval := os.Getenv("CLEANUP_INTERVAL"); interval != "" {
+		if d, err := time.ParseDuration(interval); err == nil {
+			cleanupInterval = d
+		}
+	}
 
-    retentionPeriod := 24 * time.Hour // Keep files for 24 hours
-    if period := os.Getenv("RETENTION_PERIOD"); period != "" {
-        if d, err := time.ParseDuration(period); err == nil {
-            retentionPeriod = d
-        }
-    }
+	retentionPeriod := 24 * time.Hour // Keep files for 24 hours
+	if period := os.Getenv("RETENTION_PERIOD"); period != "" {
+		if d, err := time.ParseDuration(period); err == nil {
+			retentionPeriod = d
+		}
+	}
 
-    ticker := time.NewTicker(cleanupInterval)
-    defer ticker.Stop()
+	ticker := time.NewTicker(cleanupInterval)
+	defer ticker.Stop()
 
-    s.logger.Info("starting cleanup job",
-        "interval", cleanupInterval,
-        "retention_period", retentionPeriod,
-    )
+	s.logger.Info("starting cleanup job",
+		"interval", cleanupInterval,
+		"retention_period", retentionPeriod,
+	)
 
-    for {
-        select {
-        case <-ctx.Done():
-            s.logger.Info("stopping cleanup job")
-            return
-        case <-ticker.C:
-            cutoffTime := time.Now().Add(-retentionPeriod)
-            jobs, err := s.db.GetOldJobs(cutoffTime)
-            if err != nil {
-                s.logger.Error("failed to get old jobs", "error", err)
-                continue
-            }
+	for {
+		select {
+		case <-ctx.Done():
+			s.logger.Info("stopping cleanup job")
+			return
+		case <-ticker.C:
+			cutoffTime := time.Now().Add(-retentionPeriod)
+			jobs, err := s.db.GetOldJobs(cutoffTime)
+			if err != nil {
+				s.logger.Error("failed to get old jobs", "error", err)
+				continue
+			}
 
-            for _, job := range jobs {
-                // Delete files
-                jobDir := filepath.Join(s.converter.tempDir, job.ID)
-                if err := os.RemoveAll(jobDir); err != nil {
-                    s.logger.Error("failed to remove job directory",
-                        "error", err,
-                        "path", jobDir,
-                    )
-                    continue
-                }
+			for _, job := range jobs {
+				// Delete files
+				jobDir := filepath.Join(s.converter.tempDir, job.ID)
+				if err := os.RemoveAll(jobDir); err != nil {
+					s.logger.Error("failed to remove job directory",
+						"error", err,
+						"path", jobDir,
+					)
+					continue
+				}
 
-                // Delete from database
-                if err := s.db.DeleteJob(job.ID); err != nil {
-                    s.logger.Error("failed to delete job from database",
-                        "error", err,
-                        "job_id", job.ID,
-                    )
-                    continue
-                }
+				// Delete from database
+				if err := s.db.DeleteJob(job.ID); err != nil {
+					s.logger.Error("failed to delete job from database",
+						"error", err,
+						"job_id", job.ID,
+					)
+					continue
+				}
 
-                s.logger.Info("cleaned up old job",
-                    "job_id", job.ID,
-                    "created_at", job.CreatedAt,
-                )
-            }
-        }
-    }
+				s.logger.Info("cleaned up old job",
+					"job_id", job.ID,
+					"created_at", job.CreatedAt,
+				)
+			}
+		}
+	}
 }
 
 func main() {
@@ -752,14 +843,14 @@ func main() {
 		sigChan := make(chan os.Signal, 1)
 		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 		sig := <-sigChan
-		
+
 		logger.Info("received shutdown signal", "signal", sig)
 		cancel() // Cancel context for cleanup job
-		
+
 		// Give cleanup routines time to finish
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer shutdownCancel()
-		
+
 		if err := srv.Shutdown(shutdownCtx); err != nil {
 			logger.Error("server shutdown failed", "error", err)
 		}

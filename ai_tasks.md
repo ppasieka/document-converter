@@ -23,14 +23,8 @@ Files:
  - services/db.go - converter database related code
  - templates/panel.html - UI for manual conversion
  - Dockerfile - build and production image where the API will run
- - entrypoint.sh - entrypoint bash script that verifys the environment before API starts
 
 ## Low-level tasks
-- Check if the convert job exists in the database.
-- If the job exists, delete it from the database.
-- Return a success response (204 No Content) if the deletion was successful.
-- Return an error response (404 Not Found) if the job does not exist.
-- Handle any database errors.
-- Delete files related to the job
-- Publish websocket message about the deleted job
-- update the UI to allow deletion
+- log all outputs from the libreoffice command execution
+- ensure that the file is created in the converted folder after libreoffice finish
+- if file does not exists, mark job as failed
